@@ -1,2 +1,4 @@
-﻿.claude/
+.claude/
 *.local.md
+.venv/
+__pycache__/
