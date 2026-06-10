@@ -1,0 +1,180 @@
+version: 1
+
+layers:
+  - research
+  - code
+  - market
+  - platform
+
+node_types:
+  # --- research layer ---
+  - name: ResearchPaper
+    layer: research
+    required_metadata: [title, year]
+    description: A published research paper or preprint.
+  - name: Claim
+    layer: research
+    required_metadata: [statement]
+    description: An extracted, attributable claim made in a research source.
+  - name: Method
+    layer: research
+    required_metadata: [description]
+    description: A technique, algorithm, or approach described in research.
+  - name: Dataset
+    layer: research
+    required_metadata: [domain]
+    description: A dataset used for training or evaluation.
+  - name: Metric
+    layer: research
+    required_metadata: [unit]
+    description: A quantitative evaluation metric.
+  - name: Author
+    layer: research
+    required_metadata: [full_name]
+    description: An author of one or more research papers.
+  - name: Institution
+    layer: research
+    required_metadata: [country]
+    description: A research institution or organization.
+
+  # --- code layer ---
+  - name: Repository
+    layer: code
+    required_metadata: [url]
+    description: A source code repository.
+  - name: CodeBlock
+    layer: code
+    required_metadata: [language, symbol_path]
+    description: A symbol-level code unit (function, class, module) from AST/SCIP indexing.
+  - name: Interface
+    layer: code
+    required_metadata: [signature]
+    description: A public interface or API contract exposed by code.
+  - name: Dependency
+    layer: code
+    required_metadata: [package_name, version_spec]
+    description: An external package or library dependency.
+  - name: TestCase
+    layer: code
+    required_metadata: [framework]
+    description: An automated test case.
+  - name: SoftwareArtifact
+    layer: code
+    required_metadata: [artifact_type]
+    description: A built artifact (image, wheel, binary) produced from code.
+
+  # --- market layer ---
+  - name: Company
+    layer: market
+    required_metadata: [domain]
+    description: A company active in a market.
+  - name: Product
+    layer: market
+    required_metadata: [category]
+    description: A product or service offered in a market.
+  - name: MarketSignal
+    layer: market
+    required_metadata: [signal_type, observed_at]
+    description: An observed demand, pricing, or sentiment signal from a market feed.
+  - name: Segment
+    layer: market
+    required_metadata: [definition]
+    description: A market segment (warehouse aggregate promoted as a node).
+  - name: Need
+    layer: market
+    required_metadata: [statement]
+    description: An unmet customer or market need.
+
+  # --- platform layer ---
+  - name: Opportunity
+    layer: platform
+    required_metadata: [thesis]
+    description: A research-to-product arbitrage opportunity identified by the platform.
+  - name: Hypothesis
+    layer: platform
+    required_metadata: [statement]
+    description: A testable hypothesis attached to an opportunity.
+  - name: ARS
+    layer: platform
+    required_metadata: [version]
+    description: An Agent Requirement Specification governing a mission.
+  - name: Task
+    layer: platform
+    required_metadata: [status]
+    description: A unit of platform work executed by an agent or human.
+  - name: DeploymentRecord
+    layer: platform
+    required_metadata: [service, revision]
+    description: A record of a release deployed by the platform.
+  - name: AgentEpisode
+    layer: platform
+    required_metadata: [agent_id, outcome]
+    description: An episodic memory entry capturing one agent experience.
+
+relation_types:
+  - name: CITES
+    source_types: [ResearchPaper]
+    target_types: [ResearchPaper]
+    cross_layer: false
+    description: A paper cites another paper (citation graph backbone).
+  - name: IMPROVES_ON
+    source_types: [Method]
+    target_types: [Method]
+    cross_layer: false
+    description: A method improves on a prior method.
+  - name: CONTRADICTS
+    source_types: [Claim]
+    target_types: [Claim]
+    cross_layer: false
+    description: A claim contradicts another claim.
+  - name: EVALUATED_ON
+    source_types: [Method]
+    target_types: [Dataset]
+    cross_layer: false
+    description: A method was evaluated on a dataset.
+  - name: IMPLEMENTS
+    source_types: [CodeBlock]
+    target_types: [Method]
+    cross_layer: true
+    description: A code block implements a research method.
+  - name: DEPENDS_ON
+    source_types: [CodeBlock, Repository]
+    target_types: [Dependency]
+    cross_layer: false
+    description: Code depends on an external package.
+  - name: COMPETES_WITH
+    source_types: [Company]
+    target_types: [Company]
+    cross_layer: false
+    description: Two companies compete in a market.
+  - name: SIGNALS_DEMAND_FOR
+    source_types: [MarketSignal]
+    target_types: [Need, Method]
+    cross_layer: true
+    description: A market signal indicates demand for a need or a method.
+  - name: ADDRESSES
+    source_types: [Claim, Method]
+    target_types: [Need]
+    cross_layer: true
+    description: A research claim or method addresses a market need.
+  - name: IMPLEMENTABLE_AS
+    source_types: [Method]
+    target_types: [CodeBlock]
+    cross_layer: true
+    description: A method is implementable as a concrete code block (arbitrage edge).
+  - name: SAME_AS_CANDIDATE
+    source_types: ["*"]
+    target_types: ["*"]
+    cross_layer: false
+    same_type_only: true
+    description: Entity-resolution candidate pair awaiting human curation (same node type only).
+  - name: AUTHORED_BY
+    source_types: [ResearchPaper]
+    target_types: [Author]
+    cross_layer: false
+    description: A paper was authored by an author.
+  - name: AFFILIATED_WITH
+    source_types: [Author]
+    target_types: [Institution]
+    cross_layer: false
+    description: An author is affiliated with an institution.

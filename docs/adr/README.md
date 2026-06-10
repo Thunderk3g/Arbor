@@ -15,3 +15,4 @@ ADRs record *why*; the RFC records *what*. When they conflict, the newer ADR win
 | [008](008-taint-tool-firewall.md) | Taint-based tool firewall for prompt injection | Accepted | §7.6 |
 | [009](009-approval-tokens.md) | Signed single-use approval tokens for HITL | Accepted | §7.3 |
 | [010](010-monorepo.md) | Single monorepo | Accepted | §11 |
+| [011](011-python-reference-implementations.md) | Python reference implementations for protocol cores | Accepted | §11, App. A |
