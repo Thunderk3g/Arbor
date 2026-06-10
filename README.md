@@ -27,6 +27,7 @@ Focal Graph reasoning — under enforced human strategic oversight.
 | 11 | [Repository Organization](docs/rfc/11-repository.md) | Monorepo layout, CI/CD organization |
 | 12 | [Phased Roadmap](docs/rfc/12-roadmap.md) | Phase 0→5, team sizing, milestones, risk, success metrics |
 | A | [Implementation Checklists](docs/rfc/13-implementation-checklists.md) | Build-order checklists, MVP exit gate, definition of done |
+| B | [Agent Prompting & Scaffolding Standards](docs/rfc/14-agent-prompting-standards.md) | Effort routing, prompt pack rules, grounded claims, verifier scaffolding, prompt lifecycle |
 | — | [Architecture Decision Records](docs/adr/README.md) | ADR-001…010: the load-bearing decisions and their trade-offs |
 | — | [Glossary](docs/rfc/glossary.md) | Platform vocabulary |
 | — | [Golden Mission Walkthrough](examples/mission-walkthrough.md) | End-to-end example tracing every subsystem |
