@@ -80,6 +80,22 @@ class TestMemoryProvenance:
         # Taint firewall blocks trusted-tier writes from untrusted turns.
         assert r.status == "denied" and r.reason == "taint_firewall"
 
+    def test_trusted_tier_hidden_in_node_payload_still_blocked(self):
+        # Regression (review Finding 1): omitting the top-level tier but tagging
+        # a node trusted must NOT slip a trusted node past the firewall.
+        p = make_platform()
+        prov = {"source_type": "paper", "source_ref": "s", "extractor": "e",
+                "confidence": 0.8, "taint": "trusted"}
+        r = p.gateway.invoke(
+            agent_principal(), "graph.write",
+            {"provenance": prov,
+             "nodes": [{"id": "evil", "type": "Opportunity", "canonical_name": "e",
+                        "metadata": {"thesis": "t"}, "tier": "trusted"}]},  # no top-level tier
+            ctx(p, taint="external_untrusted"),
+        )
+        assert r.status == "denied" and r.reason == "taint_firewall"
+        assert "evil" not in p.graph.nodes
+
     def test_ontology_violation_surfaces_as_error(self):
         p = make_platform()
         prov = {"source_type": "agent_inference", "source_ref": "s", "extractor": "e",

@@ -265,7 +265,7 @@ class DeveloperAgent(_BaseRole):
             evidence_ledger_id=commit_ledger,
         ))
         claims_sheet = summary_for_claims_sheet(tm)
-        declared_scope = {"symbols_touched": 11, "touches_billing": False}
+        declared_scope = {"symbols_touched": 11, "services_touched": 1, "touches_billing": False}
 
         return {
             "blocked_write_status": blocked.status,

@@ -1,0 +1,13 @@
+# Keep the build context small and reproducible — exclude local-only state.
+.venv
+.git
+__pycache__
+.pytest_cache
+*.pyc
+.claude
+
+# NOTE: `memory/` is intentionally NOT excluded. In this repo it is the
+# r2pip_memory package root (one of the seven PYTHONPATH roots), not an agent
+# memory scratch dir — excluding it would break the demo and the API at import
+# time. If a stray agent-memory dir is ever added at the repo root, exclude that
+# specific path instead.

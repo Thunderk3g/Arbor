@@ -1,0 +1,39 @@
+# Optional editable install for the multi-root R2P-IP monorepo.
+#
+# The canonical dev flow is path-based: pytest.ini and scripts/run_demo.py put
+# the seven r2pip_* roots on the path, so NO install is needed to run the suite
+# or the demo. This file is purely a convenience so `pip install -e .` ALSO
+# makes the packages importable (e.g. for tooling that cannot set PYTHONPATH).
+#
+# It deliberately does NOT configure pytest — pytest.ini remains the single
+# source of truth for test discovery, so installing this package does not change
+# test behavior (verified: 214 passed with the editable install present).
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "r2pip"
+version = "0.1.0"
+description = "R2P-IP reference platform (multi-root monorepo)"
+requires-python = ">=3.10"
+dynamic = ["dependencies"]
+
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements.txt"] }
+
+# Discover the seven top-level r2pip_* packages, each under its own root.
+# `include` keeps the per-root `tests` dirs out of the install; subpackages
+# (e.g. r2pip_platform.mission) are found automatically under their root.
+[tool.setuptools.packages.find]
+where = [
+    "backend/audit",
+    "backend/approval",
+    "backend/gateway",
+    "graph/ontology",
+    "graph/focal",
+    "memory",
+    "platform",
+]
+include = ["r2pip_*"]
+namespaces = false

@@ -50,16 +50,19 @@ class StageRecord(BaseModel):
 
 
 class GateContext(BaseModel):
-    """Everything a human needs to decide a HITL checkpoint (RFC-001 §1.7, §7.3)."""
+    """Everything a human needs to decide a HITL checkpoint (RFC-001 §1.7, §7.3).
 
-    checkpoint: str  # "H1" | "H2" | "H5"
+    The mission exercises H1 (spec), H2 (plan), H4 (claims-sheet/merge), and
+    H5 (deploy).
+    """
+
+    checkpoint: str  # "H1" | "H2" | "H4" | "H5"
     title: str
     subject_id: str
     risk_score: float = 0.0
     evidence: dict[str, Any] = Field(default_factory=dict)
     destructive: bool = False
     required_consequence: Optional[str] = None
-    dual_control: bool = False
 
 
 class MissionState(BaseModel):
