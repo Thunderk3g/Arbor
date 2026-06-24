@@ -30,6 +30,20 @@ def compute_params_hash(args: Dict[str, Any]) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def _requests_trusted_tier(value: Any) -> bool:
+    """True if a ``"tier": "trusted"`` appears anywhere in the call args — at the
+    top level OR nested inside a node/edge spec. Checking only the top-level key
+    let an untrusted turn mint a trusted-tier node by hiding ``tier`` inside the
+    node payload; scanning the whole structure closes that bypass (ADR-008)."""
+    if isinstance(value, dict):
+        if value.get("tier") == "trusted":
+            return True
+        return any(_requests_trusted_tier(v) for v in value.values())
+    if isinstance(value, list):
+        return any(_requests_trusted_tier(item) for item in value)
+    return False
+
+
 class Principal(BaseModel):
     kind: Literal["human", "agent", "system"]
     id: str
@@ -99,7 +113,7 @@ class PolicyEngine:
             return PolicyDecision(
                 allow=False, reason="taint_firewall", policy="taint_firewall"
             )
-        if tool.family == "memory" and args.get("tier") == "trusted":
+        if tool.family == "memory" and _requests_trusted_tier(args):
             return PolicyDecision(
                 allow=False, reason="taint_firewall", policy="taint_firewall"
             )

@@ -54,6 +54,14 @@ class TestGoldenMissionHappyPath:
         assert "taint firewall" in f["could_paper_inject"]
         assert "verified=True" in f["reproduce"]
 
+    def test_injection_answer_is_derived_from_the_log(self):
+        # The "could the paper inject" answer must be a computed conclusion:
+        # zero Action calls succeeded under untrusted taint, per the audit log.
+        _, _, result = run_golden_mission()
+        answer = result.forensics["could_paper_inject"]
+        assert answer.startswith("No.")
+        assert "0 Action calls succeeded under untrusted taint" in answer
+
     def test_every_mutation_is_audited_and_chain_intact(self):
         platform, _, result = run_golden_mission()
         events = platform.audit.get_events(platform.tenant_id)
@@ -81,6 +89,22 @@ class TestRejectedGatesAbort:
         assert "H5" in result.state.abort_reason
         assert result.state.merged is True  # got as far as merge
         assert result.state.deployed is False
+
+
+class TestMergeFailureAborts:
+    def test_denied_merge_aborts_before_deploy(self):
+        # Force repo.merge to be denied by exhausting the head engineer's budget
+        # (3 analysis calls in planning, then the merge is the 4th). The mission
+        # must abort at merge and never deploy (review Finding 3).
+        platform = make_platform()
+        platform.budget.set_limit("head-engineer", 3)
+        orch = MissionOrchestrator(platform, scripted_approver)
+        result = orch.run(make_spec())
+        assert result.state.status == "aborted"
+        assert "repo.merge failed" in (result.state.abort_reason or "")
+        assert result.state.merged is False
+        assert result.state.deployed is False
+        assert result.chain_valid is True
 
 
 class TestClaimsSheetVerification:

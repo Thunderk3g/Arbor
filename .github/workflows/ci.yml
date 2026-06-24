@@ -1,0 +1,32 @@
+# CI for the R2P-IP reference platform.
+#
+# No install step: pytest.ini and scripts/run_demo.py put the seven r2pip_*
+# package roots on the path, so `pytest` and the demo run from the repo root.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run test suite
+        run: pytest
+
+      - name: Run golden-mission demo (must exit 0)
+        run: python scripts/run_demo.py

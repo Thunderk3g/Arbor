@@ -46,3 +46,60 @@ Focal Graph reasoning — under enforced human strategic oversight.
 4. Prompt-injection defense in depth (taint tracking, content/instruction separation, tool firewalls).
 5. Terabyte-scale data, enterprise SaaS multi-tenancy, zero-downtime deploys.
 6. Explainability and observability are first-class: every autonomous decision is reconstructible.
+
+## Running the platform
+
+The repo is a multi-root monorepo: seven `r2pip_*` packages live under different
+directories (`backend/audit`, `backend/approval`, `backend/gateway`,
+`graph/focal`, `graph/ontology`, `memory`, `platform`). `pytest.ini` and
+`scripts/run_demo.py` put those roots on the path for you, so there is **no
+install step** for the test suite or the demo.
+
+### Quickstart
+
+```bash
+python -m venv .venv
+# Windows:        .venv\Scripts\activate
+# macOS / Linux:  source .venv/bin/activate
+
+pip install -r requirements.txt
+
+pytest                       # full suite (214 passed), no install needed
+python scripts/run_demo.py   # golden-mission demo; prints a report, exits 0
+```
+
+### Running the API
+
+The FastAPI app object is `r2pip_platform.app:app`. The seven package roots must
+be on `PYTHONPATH` for uvicorn to import it (the demo launcher does this itself,
+but uvicorn does not). Endpoints: `GET /health`, `GET /tools`,
+`POST /missions/run`, `GET /audit/verify`.
+
+```bash
+# macOS / Linux — point PYTHONPATH at the seven roots:
+PYTHONPATH=backend/audit:backend/approval:backend/gateway:graph/ontology:graph/focal:memory:platform \
+  uvicorn r2pip_platform.app:app --host 0.0.0.0 --port 8000
+```
+
+```powershell
+# Windows PowerShell:
+$env:PYTHONPATH = "backend/audit;backend/approval;backend/gateway;graph/ontology;graph/focal;memory;platform"
+uvicorn r2pip_platform.app:app --host 0.0.0.0 --port 8000
+```
+
+Then `curl http://localhost:8000/health`.
+
+Optionally, `pip install -e .` makes all seven packages importable without
+setting `PYTHONPATH` (the path-based flow above keeps working either way). This
+is a convenience only; `pytest.ini` remains the source of truth for tests.
+
+### Docker / Compose
+
+```bash
+# Run the golden-mission demo in a container (default CMD, exits 0 on success):
+docker build -t r2pip-platform .
+docker run --rm r2pip-platform
+
+# Serve the API on http://localhost:8000 (includes a /health healthcheck):
+docker compose up --build
+```

@@ -1,0 +1,24 @@
+# Serve the R2P-IP reference platform's FastAPI app.
+#
+# Builds the image from the repo Dockerfile, then overrides the default demo
+# CMD to run uvicorn. PYTHONPATH is set explicitly here too (compose env does
+# not inherit the image's ENV for the overridden command's resolution in a
+# guaranteed way) so the seven r2pip_* roots resolve.
+services:
+  platform:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: r2pip-platform:local
+    environment:
+      PYTHONPATH: /app/backend/audit:/app/backend/approval:/app/backend/gateway:/app/graph/ontology:/app/graph/focal:/app/memory:/app/platform
+    command: ["uvicorn", "r2pip_platform.app:app", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "8000:8000"
+    healthcheck:
+      # Use the stdlib (no curl in python:3.12-slim); fail non-zero on bad status.
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0) if urllib.request.urlopen('http://localhost:8000/health').status == 200 else sys.exit(1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

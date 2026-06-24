@@ -84,10 +84,16 @@ class MissionOrchestrator:
         evidence: dict,
         destructive: bool = False,
         required_consequence: Optional[str] = None,
-        dual_control: bool = False,
     ) -> tuple[bool, Optional[str], object]:
         """Create an approval request, obtain the human decision, audit it.
-        Returns (approved, token, request)."""
+        Returns (approved, token, request).
+
+        Single-approver gates only. Dual-control (two distinct humans) is a
+        capability of the Approval Service but is not wired here: the approver
+        callback yields one decision, which cannot satisfy a two-approver
+        request, so exposing it would silently look like a rejection. Gates that
+        need dual control should drive ApprovalService.decide directly.
+        """
         platform = self.platform
         request = platform.approval.create_request(
             tenant_id=platform.tenant_id,
@@ -99,12 +105,11 @@ class MissionOrchestrator:
             evidence_bundle=evidence,
             destructive=destructive,
             required_consequence=required_consequence,
-            dual_control=dual_control,
         )
         gate = GateContext(
             checkpoint=checkpoint, title=action_type, subject_id=subject_id,
             risk_score=risk_score, evidence=evidence, destructive=destructive,
-            required_consequence=required_consequence, dual_control=dual_control,
+            required_consequence=required_consequence,
         )
         decision = self.approver(gate)
         if not isinstance(decision, ApprovalDecision):
@@ -252,8 +257,12 @@ class MissionOrchestrator:
             mission_id=self.mission_id, task_id="T-merge", trace_id=f"{self.mission_id}-merge",
         )
         state.merged = merge.status == "ok"
+        if not state.merged:
+            # A failed merge must stop the mission — never deploy an artifact
+            # that was never merged to the protected branch.
+            raise MissionAborted("5-merge", f"repo.merge failed: {merge.reason}")
         state.record(StageRecord(
-            stage="5-merge", status="ok" if state.merged else "error",
+            stage="5-merge", status="ok",
             summary=f"claims within blast radius; merged at H4 ({reason})",
             audit_seqs=[merge.audit_seq], data={"verify": reason},
         ))
@@ -284,9 +293,18 @@ class MissionOrchestrator:
 
     @staticmethod
     def _verify_claims_sheet(declared: dict, blast_radius: dict) -> tuple[bool, str]:
-        """Mechanical claims-sheet check vs blast radius (RFC-001 §5; A.5)."""
+        """Mechanical claims-sheet check vs blast radius (RFC-001 §5; A.5).
+
+        Checks the agent's *declared* scope against the independently *measured*
+        blast radius (from blast.analyze, which the developer does not control)
+        across every dimension the analyzer reports. In production this is paired
+        with a diff of the actual change vs the declaration; here the declaration
+        is the reference contract under test.
+        """
         if declared.get("symbols_touched", 0) > blast_radius.get("symbols", 0):
             return False, "symbols_touched exceeds blast radius"
+        if declared.get("services_touched", 0) > blast_radius.get("services", 0):
+            return False, "services_touched exceeds blast radius"
         if declared.get("touches_billing", False):
             return False, "declared scope touches billing (ARS non-goal)"
         return True, "within declared blast radius; billing untouched"
@@ -305,31 +323,59 @@ class MissionOrchestrator:
         )
 
     def _forensics(self, state: MissionState, events) -> dict:
+        """Answer the walkthrough's four questions strictly from audit evidence.
+
+        The injection answer is *computed*, never asserted: it is a conclusion
+        only if the log shows zero Action calls succeeded under untrusted taint.
+        """
+        registry = self.platform.registry
         untrusted_events = [e for e in events if e.context.taint == "external_untrusted"]
-        denials = [e for e in events if e.action.type == "policy_decision"]
         prompts = [e for e in events if e.action.type == "prompt"]
         approvals = [e for e in events if e.action.type == "approval"]
 
+        # Taint-firewall denials = policy denials that happened under untrusted taint.
+        taint_denials = [
+            e for e in events
+            if e.action.type == "policy_decision" and e.context.taint == "external_untrusted"
+        ]
+        # The thing that must be empty: an Action-family tool_call that *succeeded*
+        # while the turn was tainted.
+        leaked_actions = [
+            e for e in events
+            if e.action.type == "tool_call"
+            and e.context.taint == "external_untrusted"
+            and (lambda t: t is not None and t.family == "action")(registry.get(e.action.tool or ""))
+        ]
+
         insight = next((s for s in state.stages if s.stage == "0-insight"), None)
-        why = (insight.summary if insight else "n/a")
+        why = insight.summary if insight else "n/a"
 
         deploy_stage = next((s for s in state.stages if s.stage == "6-deploy"), None)
         who_prod = (
             f"H5 approval bound to digest {state.spec.image_digest}; "
-            f"{len(approvals)} approval events recorded"
+            f"{len(approvals)} approval event(s) recorded across H1/H2/H4/H5"
             if deploy_stage else "not deployed"
         )
+
+        if not leaked_actions:
+            inject_answer = (
+                f"No. {len(untrusted_events)} event(s) carried untrusted content; "
+                f"{len(taint_denials)} Action call(s) were blocked by the taint firewall; "
+                "0 Action calls succeeded under untrusted taint (verified from the log)."
+            )
+        else:
+            inject_answer = (
+                f"WARNING: {len(leaked_actions)} Action call(s) SUCCEEDED under untrusted "
+                "taint -- the firewall did not hold. Investigate immediately."
+            )
 
         return {
             "why_feature_exists": why,
             "who_approved_production": who_prod,
-            "could_paper_inject": (
-                f"{len(untrusted_events)} turn(s)/call(s) carried untrusted content; "
-                f"{len(denials)} Action call(s) blocked by policy (taint firewall); "
-                "no untrusted turn ever reached an Action tool"
-            ),
+            "could_paper_inject": inject_answer,
             "reproduce": (
-                f"audit chain length {len(events)}, verified={verify_chain(events).valid}; "
-                f"{len(prompts)} prompt hashes pinned for deterministic replay"
+                f"audit chain length {len(events)}, integrity verified="
+                f"{verify_chain(events).valid}; {len(prompts)} prompt hash(es) plus focal-"
+                "graph ids and per-call params hashes pinned in the log for replay"
             ),
         }
