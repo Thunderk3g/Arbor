@@ -77,8 +77,17 @@ class TestTampering:
         request = make_request(service)
         token = service.decide(request.id, approve()).token
 
-        last = token[-1]
-        tampered = token[:-1] + ("A" if last != "A" else "B")
+        # Flip a character in the PAYLOAD segment, not the signature tail.
+        # The last base64url char of an Ed25519 signature encodes only 2
+        # significant bits (the rest are discarded padding), so flipping it
+        # can decode to the identical signature and verify legitimately -> flaky.
+        # Changing the signed header.payload string makes the signature
+        # deterministically invalid.
+        header, payload, signature = token.split(".")
+        idx = len(payload) // 2
+        flipped = "A" if payload[idx] != "A" else "B"
+        tampered = ".".join([header, payload[:idx] + flipped + payload[idx + 1 :], signature])
+
         result = service.verify(tampered, request.params_hash)
         assert result.valid is False
         assert result.reason == "invalid_token"
