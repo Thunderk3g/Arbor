@@ -64,7 +64,7 @@ python -m venv .venv
 
 pip install -r requirements.txt
 
-pytest                       # full suite (214 passed), no install needed
+pytest                       # full suite (219 passed), no install needed
 python scripts/run_demo.py   # golden-mission demo; prints a report, exits 0
 ```
 
