@@ -14,8 +14,41 @@ Arbor began as a "research to product" agent platform (RFC-001). That use case
 is dropped. The safety machinery is being kept and rebuilt around a security
 agent; the original RFC is kept under [Background](#background-the-original-rfc).
 
+## Run it in one command
+
+From a fresh clone, on macOS or Linux with Python 3.12 or newer:
+
+```bash
+./run.sh
+```
+
+This creates a virtual environment, installs the dependencies, runs the 219
+tests, and then runs the demo mission, which prints a report and exits. The
+first run takes about 15 seconds; later runs skip the setup.
+
+It runs the **reference implementation**: scripted agents and stand-in tools
+going through the real gateway, approval tokens and audit chain. It does not
+start a security agent, and it does not watch or change the machine it runs on.
+
+| Command | What it does |
+|---|---|
+| `./run.sh` | Set up, run the tests, run the demo |
+| `./run.sh demo` | Run only the demo |
+| `./run.sh test` | Run only the tests |
+| `./run.sh api` | Serve the API on `http://127.0.0.1:8000` |
+
+With Docker instead, on any platform including Windows:
+
+```bash
+docker compose up --build
+```
+
+That builds the image and serves the same API on port 8000. More options are
+under [Running the reference implementation](#running-the-reference-implementation).
+
 ## Contents
 
+- [Run it in one command](#run-it-in-one-command)
 - [The idea in one picture](#the-idea-in-one-picture)
 - [How the agent works](#how-the-agent-works)
 - [What happens when something changes on the VM](#what-happens-when-something-changes-on-the-vm)
@@ -299,7 +332,11 @@ directories (`backend/audit`, `backend/approval`, `backend/gateway`,
 `scripts/run_demo.py` put those roots on the path for you, so there is **no
 install step** for the test suite or the demo.
 
-### Quickstart
+The quickest route is `./run.sh`, described under
+[Run it in one command](#run-it-in-one-command). The steps below do the same
+thing by hand, and work on Windows too.
+
+### Quickstart by hand
 
 ```bash
 python -m venv .venv
@@ -319,7 +356,9 @@ be on `PYTHONPATH` for uvicorn to import it (the demo launcher does this itself,
 but uvicorn does not). Endpoints: `GET /health`, `GET /tools`,
 `POST /missions/run`, `GET /audit/verify`.
 
-The API has no authentication. Keep it on a machine or network you trust.
+The API has no authentication. `./run.sh api` binds it to this machine only
+(`127.0.0.1`). The commands below and the Compose file listen on all network
+interfaces (`0.0.0.0`), so use those only on a machine or network you trust.
 
 ```bash
 # macOS / Linux — point PYTHONPATH at the seven roots:
