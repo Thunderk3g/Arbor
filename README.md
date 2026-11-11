@@ -1,152 +1,177 @@
+<div align="center">
+
 # Arbor
 
-A self-hosted security agent for a Linux VM you own: it watches the box, explains
-what changed, and acts only through a short list of typed, reversible actions.
+**A self-hosted security agent for the Linux servers you own.**
 
-> **Status: design plus a reference safety kernel. No security agent runs yet.**
-> The agent described below is the planned design from the
-> [research report](reports/Arbor%20self%20hosted%20security%20agent.md).
-> What runs today is a tested, in-memory Python reference implementation
-> (219 tests) with scripted agents and stand-in tools. Every feature in this
-> README is marked **Built**, **Partial** or **Planned**.
+It watches the box, explains what changed in plain language,<br>
+and acts only through a short list of reversible actions you approve.
 
-Arbor began as a "research to product" agent platform (RFC-001). That use case
-is dropped. The safety machinery is being kept and rebuilt around a security
-agent; the original RFC is kept under [Background](#background-the-original-rfc).
+[![CI](https://github.com/Thunderk3g/Arbor/actions/workflows/ci.yml/badge.svg)](https://github.com/Thunderk3g/Arbor/actions/workflows/ci.yml)
+![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-3776AB?logo=python&logoColor=white)
+![Tests: 219 passing](https://img.shields.io/badge/tests-219%20passing-2ea44f)
+![Status: safety kernel](https://img.shields.io/badge/status-safety%20kernel-f59e0b)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-## Run it in one command
+[Quick start](#quick-start) · [How it works](#how-it-works) · [Features](#features) · [Roadmap](#roadmap) · [Design research](reports/Arbor%20self%20hosted%20security%20agent.md)
 
-From a fresh clone, on macOS or Linux with Python 3.12 or newer:
+</div>
+
+> [!NOTE]
+> **Where it stands:** the design is complete and the safety kernel (gateway, approval tokens, audit chain) is built and tested. The security agent itself is not built yet. `./run.sh` runs the kernel and its demo; it does not watch or change the machine it runs on.
+
+<br>
+
+## Quick start
 
 ```bash
-./run.sh
+git clone https://github.com/Thunderk3g/Arbor.git && cd Arbor && ./run.sh
 ```
 
-This creates a virtual environment, installs the dependencies, runs the 219
-tests, and then runs the demo mission, which prints a report and exits. The
-first run takes about 15 seconds; later runs skip the setup.
-
-It runs the **reference implementation**: scripted agents and stand-in tools
-going through the real gateway, approval tokens and audit chain. It does not
-start a security agent, and it does not watch or change the machine it runs on.
+One command sets up a virtual environment, installs the dependencies, runs the 219 tests and then the demo. The first run takes about 15 seconds; later runs skip the setup. Needs Python 3.12 or newer on macOS or Linux.
 
 | Command | What it does |
-|---|---|
+|:--|:--|
 | `./run.sh` | Set up, run the tests, run the demo |
-| `./run.sh demo` | Run only the demo |
 | `./run.sh test` | Run only the tests |
+| `./run.sh demo` | Run only the demo |
 | `./run.sh api` | Serve the API on `http://127.0.0.1:8000` |
+| `docker compose up --build` | Serve the API from a container, on any platform |
 
-With Docker instead, on any platform including Windows:
+<details>
+<summary><b>Run it without the script</b> (Windows, or step by step)</summary>
+
+<br>
+
+`pytest.ini` and `scripts/run_demo.py` put the package roots on the path themselves, so there is no install step.
 
 ```bash
-docker compose up --build
+python -m venv .venv
+# Windows:        .venv\Scripts\activate
+# macOS / Linux:  source .venv/bin/activate
+
+pip install -r requirements.txt
+pytest                       # 219 tests
+python scripts/run_demo.py   # demo; prints a report and exits 0
 ```
 
-That builds the image and serves the same API on port 8000. More options are
-under [Running the reference implementation](#running-the-reference-implementation).
+To serve the API by hand, put the seven package roots on `PYTHONPATH`:
 
-## Contents
+```bash
+# macOS / Linux
+PYTHONPATH=backend/audit:backend/approval:backend/gateway:graph/ontology:graph/focal:memory:platform \
+  uvicorn r2pip_platform.app:app --host 127.0.0.1 --port 8000
+```
 
-- [Run it in one command](#run-it-in-one-command)
-- [The idea in one picture](#the-idea-in-one-picture)
-- [How the agent works](#how-the-agent-works)
-- [What happens when something changes on the VM](#what-happens-when-something-changes-on-the-vm)
-- [Features](#features)
-- [How much the agent may do on its own](#how-much-the-agent-may-do-on-its-own)
-- [Attack, check, fix, repeat](#attack-check-fix-repeat)
-- [What runs today](#what-runs-today)
-- [Build plan](#build-plan)
-- [Running the reference implementation](#running-the-reference-implementation)
-- [Background: the original RFC](#background-the-original-rfc)
+```powershell
+# Windows PowerShell
+$env:PYTHONPATH = "backend/audit;backend/approval;backend/gateway;graph/ontology;graph/focal;memory;platform"
+uvicorn r2pip_platform.app:app --host 127.0.0.1 --port 8000
+```
 
-## The idea in one picture
+Endpoints: `GET /health`, `GET /tools`, `POST /missions/run`, `GET /audit/verify`.
 
-Three rules shape everything else:
+To run the demo in a container instead:
 
-1. **Code notices, the model explains.** Deterministic checks (baseline diffs,
-   canary tokens, blocked outbound connections) detect problems. The model reads
-   their output and tells you what it means. It is never the first line of
-   detection, and it cannot suppress an alert.
-2. **The model is the least privileged part.** It runs on a separate small VM
-   with no standing credentials on the target. A model that has been hijacked by
-   a poisoned log line can, at worst, write a wrong summary or request an action
-   that policy already allows.
-3. **You hold the keys.** The list of systems in scope, every approval, and the
-   kill switch are signed on a device neither VM can reach.
+```bash
+docker build -t arbor . && docker run --rm arbor
+```
+
+> [!WARNING]
+> The API has no authentication. `./run.sh api` and the commands above listen on this machine only. `docker compose up` publishes port 8000 on all network interfaces, so use it only on a machine or network you trust.
+
+</details>
+
+<br>
+
+## Three rules
+
+| 🔍 Code notices, the model explains | 🔒 The model has the least access | 🔑 You hold the keys |
+|:--|:--|:--|
+| Fixed checks (baseline diffs, canary tokens, blocked connections) detect problems. The model reads their output and explains it. It cannot suppress an alert. | The model runs on a separate machine with no standing credentials. If a poisoned log line tricks it, the worst outcome is a wrong summary. | The list of systems in scope, every approval and the kill switch are signed on a device the agent cannot reach. |
+
+<br>
+
+## How it works
 
 ```mermaid
 flowchart TB
-    subgraph target["TARGET VM"]
+    subgraph target["🖥️  TARGET VM"]
         direction TB
-        broker["Broker<br/>root-owned, a few hundred lines<br/>runs a few typed, reversible actions"]
-        apps["Your apps"]
-        sensors["Sensors<br/>osquery, auditd or Falco, journald"]
+        broker["<b>Broker</b><br/>root-owned, a few hundred lines<br/>runs five reversible actions"]
+        apps["<b>Your apps</b>"]
+        sensors["<b>Sensors</b><br/>osquery · auditd or Falco · journald"]
     end
 
-    subgraph watcher["WATCHER VM"]
+    subgraph watcher["🛰️  WATCHER VM"]
         direction TB
-        detectors["Detectors (no model)<br/>rules, baseline diff, heartbeat watch"]
-        reader["Quarantined reader (model)<br/>reads raw untrusted text<br/>no tools, no network"]
-        planner["Planner (model)<br/>sees typed findings only"]
-        gateway["Gateway and policy (no model)<br/>scope, taint, budget, audit"]
+        detectors["<b>Detectors</b><br/>rules · baseline diff · heartbeat"]
+        reader["<b>Reader</b> · AI<br/>reads untrusted text<br/>no tools, no network"]
+        planner["<b>Planner</b> · AI<br/>sees typed findings only"]
+        gateway["<b>Gateway</b><br/>scope · taint · budget · audit"]
     end
 
-    you["YOU<br/>phone or laptop with a hardware key<br/>sign: scope file, approvals, kill-switch lease"]
-    sink[("OFF-BOX STORE<br/>logs, drift manifests, audit checkpoints<br/>neither VM can delete")]
+    you["👤 <b>YOU</b><br/>hardware key<br/>scope · approvals · kill switch"]
+    sink[("<b>Off-box store</b><br/>logs · audit checkpoints<br/>neither VM can delete")]
 
-    broker -->|"changes"| apps
-    apps -->|"observed by"| sensors
-    sensors -->|"telemetry, one way"| detectors
-    detectors -->|"diffs and alert groups"| reader
-    reader -->|"typed JSON only"| planner
-    planner -->|"action requests"| gateway
-    gateway -->|"typed action over a locked-down SSH key"| broker
+    broker -->|changes| apps
+    apps -->|observed by| sensors
+    sensors -->|telemetry, one way| detectors
+    detectors -->|diffs and alert groups| reader
+    reader -->|typed JSON only| planner
+    planner -->|action requests| gateway
+    gateway -->|typed action over a locked-down SSH key| broker
 
-    detectors ==>|"alerts the model cannot suppress"| you
-    gateway -->|"approval request"| you
-    you -->|"signed approval and lease"| broker
+    detectors ==>|alerts the model cannot suppress| you
+    gateway -->|approval request| you
+    you -->|signed approval and lease| broker
 
-    sensors -.->|"logs"| sink
-    gateway -.->|"audit"| sink
-    broker -.->|"audit"| sink
+    sensors -.->|logs| sink
+    gateway -.->|audit| sink
+    broker -.->|audit| sink
+
+    classDef ai fill:#DBEAFE,stroke:#1D4ED8,color:#0B1F44,stroke-width:1.5px
+    classDef code fill:#F8FAFC,stroke:#475569,color:#0F172A
+    classDef priv fill:#FEF3C7,stroke:#B45309,color:#3B1D04,stroke-width:2px
+    classDef person fill:#DCFCE7,stroke:#15803D,color:#052E16,stroke-width:1.5px
+    classDef store fill:#EDE9FE,stroke:#6D28D9,color:#1E0B3B
+    classDef app fill:#E2E8F0,stroke:#64748B,color:#0F172A
+    class reader,planner ai
+    class detectors,gateway,sensors code
+    class broker priv
+    class you person
+    class sink store
+    class apps app
+    style target fill:transparent,stroke:#94A3B8,stroke-dasharray:4 4
+    style watcher fill:transparent,stroke:#94A3B8,stroke-dasharray:4 4
 ```
 
-The target VM runs your apps. The watcher VM runs everything that contains a
-model, as unprivileged users. A red sandbox for scans and attack replays also
-lives on the watcher VM (not drawn); its network can reach only in-scope
-addresses.
+<sub>🟦 contains an AI model · ⬜ ordinary code · 🟨 the only privileged code · 🟩 a person · 🟪 off-box storage · everything on the watcher VM runs unprivileged</sub>
 
-## How the agent works
+| Part | Runs on | AI | What it does |
+|:--|:--|:--:|:--|
+| **Sensors** | Target | — | Record processes, logins, open ports, users, scheduled jobs, SSH keys, packages, containers |
+| **Detectors** | Watcher | — | Compare each snapshot with a known-good baseline, fire fixed rules, page you directly for high-severity events |
+| **Reader** | Watcher | ✓ | Read attacker-controlled text (logs, HTTP responses, scanner output) and turn it into typed findings. No tools, no network |
+| **Planner** | Watcher | ✓ | Decide what to investigate, propose actions, write the report. Never sees raw untrusted text |
+| **Gateway** | Watcher | — | Check every request for valid arguments, scope, taint, budget and autonomy tier; write an audit record before and after |
+| **Broker** | Target | — | Check the kill-switch lease and approval signature, snapshot, run one fixed command, health-check, roll back on failure |
+| **Red sandbox** | Watcher | ✓ | Run scans and attack replays. Its network reaches only the addresses in your signed scope file |
+| **Off-box store** | Elsewhere | — | Keep logs, drift manifests and audit checkpoints where the VMs can add but not delete |
 
-Each part has one job, and the split between them is the security design.
+The broker's action list is everything the agent can change: `notify`, `upgrade_package`, `restart_unit`, `block_ip` and `pause_container`, each with a tested undo.
 
-| Part | Runs on | Uses a model? | What it does | If it is compromised |
-|---|---|---|---|---|
-| **Sensors** | Target VM | No | Collect process events, logins, listening ports, users, scheduled jobs, SSH keys, packages, containers | An attacker with root can silence them, which is why a missing heartbeat is itself an alert |
-| **Detectors** | Watcher VM | No | Compare each snapshot with the known-good baseline; fire fixed rules; page you directly for the highest-severity events | Fixed rules have no text to trick |
-| **Quarantined reader** | Watcher VM | Yes | Reads attacker-controlled text (logs, HTTP responses, scanner output) and turns it into typed findings | It has no tools and no network, so it can only emit a wrong finding |
-| **Planner** | Watcher VM | Yes | Decides what to investigate, what to propose, and what to tell you. Never sees raw untrusted text | It can only request actions from the broker's list |
-| **Gateway and policy** | Watcher VM | No | Checks every request: valid arguments, target in scope, taint, budget, autonomy tier. Writes an audit record before and after | It holds no credentials for the target on its own; the broker re-checks |
-| **Broker** | Target VM | No | Root-owned and tiny. Checks the kill-switch lease and the approval signature, takes a snapshot, runs one fixed command, checks health, rolls back on failure | The only privileged code, so it is kept small enough to read in one sitting |
-| **Red sandbox** | Watcher VM | Yes | Runs scans and attack replays. Its network can reach only the addresses in your signed scope file | Out-of-scope packets are dropped by the network, whatever the model decides |
-| **Off-box store** | Elsewhere | No | Receives logs, drift manifests and audit checkpoints as they are written | Write-only credential: the VMs can add, not delete |
+### When something changes on the server
 
-The broker's action list is the whole of what the agent can change. The planned
-first version has five: `notify`, `upgrade_package`, `restart_unit`, `block_ip`
-and `pause_container`. Each has a tested undo.
-
-## What happens when something changes on the VM
-
-A worked example: an attacker who got in adds a scheduled job to keep access.
+An intruder adds a scheduled job to keep access:
 
 ```mermaid
 sequenceDiagram
     autonumber
     participant S as Sensors
     participant D as Detectors
-    participant R as Reader
-    participant P as Planner
+    participant R as Reader (AI)
+    participant P as Planner (AI)
     participant G as Gateway
     participant Y as You
     participant B as Broker
@@ -154,8 +179,8 @@ sequenceDiagram
 
     S->>D: Inventory snapshot
     S->>O: Raw logs, as written
-    D->>D: Diff against baseline finds one unexpected cron entry
-    D->>Y: Page: unexpected persistence. No model involved
+    D->>D: Baseline diff finds one unexpected cron entry
+    D->>Y: Page: unexpected persistence (no AI involved)
     D->>R: The diff and nearby log lines
     R->>P: Typed finding: kind, path, hash, time
     P->>G: Request: pause the affected container
@@ -167,140 +192,140 @@ sequenceDiagram
         Y->>B: Signed single-use approval
         G->>B: Typed action
     end
-    B->>B: Snapshot, run fixed command, health check, roll back on failure
+    B->>B: Snapshot, run, health-check, roll back on failure
     B->>O: Audit record
-    P->>Y: Plain-language report: what was found, what was done, what you must decide
+    P->>Y: Report: what was found, what was done, what needs you
 ```
 
-Step 4 happens before any model is involved, and nothing the model does later
-can cancel it. In-place cleanup after a confirmed break-in is deliberately not
-on the action list: the plan is to snapshot, contain, rebuild the VM from its
-declared configuration, and rotate credentials by hand.
+You are paged at step 4, before any AI is involved, and nothing later can cancel that page. After a confirmed break-in the plan is snapshot, contain, rebuild from declared configuration and rotate credentials by hand. In-place cleanup is deliberately not an action.
+
+<br>
 
 ## Features
 
-**Status key.** **Built**: works in the reference code today. **Partial**: the
-core exists and is tested, but it is not yet a real security boundary.
-**Planned**: designed, not written.
+<sub>✅ Built and tested · 🟡 Partial: works, but not yet a security boundary · ⚪ Planned</sub>
 
-### Security capabilities
+### What the agent will do
 
-None of these exist yet. The phase numbers refer to the [build plan](#build-plan).
+| | Capability | What it does | Who does the work | Phase |
+|:--:|:--|:--|:--|:--:|
+| ⚪ | **Watch** | Processes, connections, logins and SSH, users and sudo, scheduled jobs, open ports, packages, containers | Sensors | 0 |
+| ⚪ | **Detect drift** | Diff against a known-good baseline: cron, systemd units, startup scripts, SSH keys, sudoers, SUID files, kernel modules | Code | 0 |
+| ⚪ | **Catch silent attacks** | Canary tokens, decoy keys and files, logged outbound blocks, alert when telemetry stops | Code | 0 |
+| ⚪ | **Keep evidence safe** | Ship logs and audit checkpoints off the server as they are written | Code | 0 |
+| ⚪ | **Patch** | Apply distribution security updates automatically and verify they ran | Code | 0 · 3 |
+| ⚪ | **Explain** | Plain-language reports: what was found, what was done, why, what needs you | AI | 2 |
+| ⚪ | **Investigate** | Group alerts, build a timeline, attach the evidence | AI, read-only | 2 |
+| ⚪ | **Contain** | Reversible, time-limited actions: block an address, pause a container, restart a service | Broker | 3 |
+| ⚪ | **Fix** | Code and configuration fixes as pull requests, accepted only when the original attack and its variants fail and tests pass | AI proposes, you merge | 3 |
+| ⚪ | **Harden CI/CD** | Pull requests that pin actions, cut token permissions and add dependency cooldowns | AI proposes, you merge | 3 |
+| ⚪ | **Red team** | Safe scans on production; real exploits only against an isolated clone | Red sandbox | 4 |
+| ⚪ | **Purple team** | Replay a technique, check a detection fired, draft a rule if not, gate it mechanically | Code gates, AI drafts | 4 |
+| ⚪ | **Cloud posture** | Identity and permission checks for the accounts the server depends on | Scanners | 5 |
 
-| Capability | What it will do | Who does the work | Status |
-|---|---|---|---|
-| **Watch** | Processes, network connections, logins and SSH, users and sudo, scheduled jobs, open ports, packages, containers | Sensors, no model | Planned, phase 0 |
-| **Detect drift and persistence** | Diff each snapshot against a known-good baseline: cron, systemd units, startup scripts, SSH keys, sudoers, SUID files, kernel modules | Code | Planned, phase 0 |
-| **Catch silent attacks** | Canary tokens, decoy keys and files, logging of blocked outbound connections, alert when telemetry stops | Code | Planned, phase 0 |
-| **Keep evidence safe** | Ship logs and audit checkpoints off the VM as they are written, to storage the VM cannot delete from | Code | Planned, phase 0 |
-| **Patch** | Apply the distribution's security updates automatically; the agent verifies they ran | Code, model reports | Planned, phase 0 and 3 |
-| **Explain** | Plain-language reports: what was found, what was done, why, and what needs you | Model | Planned, phase 2 |
-| **Investigate alerts** | Group and correlate alerts, build a timeline, attach the evidence | Model, read-only | Planned, phase 2 |
-| **Contain** | Reversible, time-limited actions: block an address, pause a container, restart a service | Broker, on request | Planned, phase 3 |
-| **Fix code and config** | Pull requests only. A fix counts when the original attack fails, variants fail, and tests pass | Model proposes, you merge | Planned, phase 3 |
-| **Harden CI/CD** | Pull requests that pin actions, cut token permissions and add dependency cooldowns. Never touches secrets, triggers or branch protection | Model proposes, you merge | Planned, phase 3 |
-| **Red team** | Safe, detection-grade scans on production. Real exploits only against an isolated clone | Red sandbox | Planned, phase 4 |
-| **Purple team** | Replay a technique, check a detection fired, draft a rule if not, gate the rule mechanically | Code gates, model drafts | Planned, phase 4 |
-| **Cloud posture** | Identity and permission checks for the accounts the VM depends on | Scanners, model reports | Planned, phase 5, optional |
+### The safety kernel
 
-### Safety machinery
+| | Mechanism | Purpose | Today |
+|:--:|:--|:--|:--|
+| 🟡 | **Tool gateway** | One checkpoint for every call: validate, apply policy, budget, log | Pipeline built and tested; runs in the same process as the caller |
+| 🟡 | **Policy rules** | Allow or deny each call | Six ordered rules with default deny; no host or repo allowlist yet |
+| 🟡 | **Taint firewall** | Stop attacker-controlled text from steering actions | Blocking rule exists; taint is supplied by the caller, not yet tracked |
+| 🟡 | **Approval tokens** | An approval covers one exact action, once | Signed, expiring, single-use, bound to an argument hash; tool name and key placement still to fix |
+| 🟡 | **Audit chain** | Reconstruct who did what | Correct SHA-256 hash chain and verifier, in memory; no off-box anchor yet |
+| 🟡 | **Budgets** | Cap how much an agent can do | Atomic check-and-consume; unmetered by default |
+| 🟡 | **Risk tiers** | Riskier actions wait for a person | Score computed; no code path depends on it yet |
+| 🟡 | **Evidence check** | A finding must cite its evidence | Checks a citation exists, not that it supports the claim |
+| ✅ | **Graph schema** | Typed schema for assets, findings and evidence | Loader and validator built and tested |
+| ✅ | **Focal extraction** | Pick the relevant slice of the graph for a task | Deterministic and tested |
+| ✅ | **Prompt assembler** | Build prompts with untrusted content fenced off | Deterministic and budgeted |
+| ⚪ | **Broker** | The only privileged code, small enough to read in one sitting | Phase 1 |
+| ⚪ | **Scope enforcement** | Out-of-scope targets unreachable, in the gateway and in the network | Phases 1 and 4 |
+| ⚪ | **Kill switch** | A short lease you renew; without it the broker refuses to act | Phase 1 |
+| ⚪ | **Off-box audit anchor** | Detect a rewritten or truncated log | Phase 1 |
+| ⚪ | **Agent loop** | The AI planner and reader | Phase 2 |
 
-| Mechanism | What it is for | State of the code today | Status |
-|---|---|---|---|
-| **Tool gateway** | One checkpoint for every tool call: validate, apply policy, budget, log | The pipeline is real and tested. It runs in the same process as the agent, so a direct call to a tool skips it | Partial |
-| **Policy rules** | Decide allow or deny per call | Six hard-coded rules, first match wins, default deny. No allowlist of hosts, repos or accounts yet | Partial |
-| **Taint firewall** | Stop text an attacker controls from steering actions | The blocking rule exists. Taint is a label the caller sets, not something tracked from what was read | Partial |
-| **Approval tokens** | Your approval covers one exact action, once | Signed, expiring, single-use, bound to a hash of the arguments. The tool name is not in the hash, and the signing key lives in the agent's process | Partial |
-| **Audit chain** | Reconstruct who did what | Correct SHA-256 hash chain and verifier, held in memory. Nothing anchors it off the machine | Partial |
-| **Budgets** | Cap how much an agent can do | Atomic check-and-consume. Unmetered by default, no time windows | Partial |
-| **Risk score and autonomy tier** | Riskier actions wait for you | A score is computed and printed. No code path depends on it | Partial |
-| **Grounded-claim check** | A finding needs evidence | Confirms a claim cites a successful tool call, not that the call supports the claim | Partial |
-| **Ontology loader and validator** | Typed knowledge graph schema | Works and is domain-neutral. The schema content is still research-shaped | Built |
-| **Focal graph extraction** | Pick the relevant slice of the graph for a task | Deterministic and tested. Profiles are still research-shaped | Built |
-| **Prompt assembler** | Build prompts with untrusted content fenced off | Deterministic and budgeted. The fence marker is not escaped yet | Built |
-| **Broker with typed actions** | The only privileged code | Not written | Planned, phase 1 |
-| **Scope enforcement** | Make out-of-scope targets unreachable, in the gateway and again in the network | Not written | Planned, phase 1 and 4 |
-| **Kill switch** | A short-lived lease you renew; without it the broker refuses to act | Not written | Planned, phase 1 |
-| **Off-box audit anchor** | Detect a rewritten or truncated log | Not written | Planned, phase 1 |
-| **Model loop** | The agent itself | Not written. Today's agents are scripted and 14 of 17 tools are stand-ins | Planned, phase 2 |
+<br>
 
-The file and line evidence for the "today" column is in the report's
-keep / change / drop table.
+## How much it may do on its own
 
-## How much the agent may do on its own
+Two questions set the tier: who wrote the change, and can it be undone.
 
-Two questions decide the tier: who wrote the change, and can it be undone.
+| Tier | When | Examples |
+|:--|:--|:--|
+| 🟢&nbsp;**Automatic** | Read-only | Scans, audits, checking that updates ran, reproducing an exploit on a copy, opening issues |
+| 🔵&nbsp;**With&nbsp;a&nbsp;net** | From a trusted upstream, or reversible and time-limited. Snapshot first, health check after, automatic rollback | Distribution security updates, restarting a non-critical service, a temporary address block, pausing a flagged container |
+| 🟠&nbsp;**You&nbsp;approve** | Written by AI, touches how you get in, or needs judgement | Code fixes, dependency bumps, reboots, SSH and firewall changes, killing processes, locking users |
+| 🔴&nbsp;**Never** | One-way doors | Deleting data, logs or backups; rotating credentials; cleanup after a break-in; changing the agent's own permissions; disabling a security control |
 
-| Tier | Rule | Examples |
-|---|---|---|
-| **0. Always automatic** | Read-only | Scans, audits, checking that updates ran, reproducing an exploit on a copy, opening issues |
-| **1. Automatic, with a safety net** | Written by a trusted upstream, or trivially reversible and time-limited. Snapshot first, health check after, automatic rollback, rate limit | Distribution security updates, restarting a non-critical service, a temporary address block, pausing a flagged container |
-| **2. Agent prepares, you approve** | Written by a model, or touches how you get in, or needs judgement | All code fixes, dependency bumps, reboots, SSH and firewall changes, killing processes, locking users |
-| **3. Never automated** | One-way doors | Deleting data, logs or backups; rotating credentials; cleanup after a confirmed break-in; changing the agent's own permissions or audit log; turning off a security control |
+### If the AI is tricked
+
+| It can | It cannot |
+|:--|:--|
+| Write a wrong summary<br>Request an action that policy already allows, within rate limits | Reach a system outside the signed scope<br>Approve its own request or silence an alert<br>Erase or rewrite the record of what it did |
+
+<br>
 
 ## Attack, check, fix, repeat
 
-The purple-team loop keeps a list of attack techniques, each with the date it
-last passed. A rule the model drafts is accepted only by a mechanical gate,
-because a rule can look right and match nothing.
+A list of attack techniques, each with the date it last passed. A rule the AI drafts is accepted only by a mechanical gate, because a rule can look right and match nothing.
 
 ```mermaid
 flowchart LR
-    pick["Pick a technique<br/>from the replay list"] --> replay["Replay it on an<br/>isolated clone of the VM"]
-    replay --> fired{"Did a<br/>detection fire?"}
+    pick["Pick a technique"] --> replay["Replay it on an<br/>isolated clone"]
+    replay --> fired{"Detection<br/>fired?"}
     fired -- yes --> pass["Record the pass<br/>and the date"]
-    fired -- no --> draft["Model drafts<br/>a detection rule"]
-    draft --> gate{"Gate, run by code:<br/>lints, fires on replay,<br/>quiet on a normal week"}
+    fired -- no --> draft["AI drafts<br/>a rule"]
+    draft --> gate{"Gate run by code<br/>lints · fires on replay ·<br/>quiet on a normal week"}
     gate -- fail --> draft
-    gate -- pass --> pr["Pull request<br/>for you to merge"]
+    gate -- pass --> pr["Pull request<br/>you merge"]
     pr --> replay
     pass --> pick
+
+    classDef ai fill:#DBEAFE,stroke:#1D4ED8,color:#0B1F44
+    classDef code fill:#F8FAFC,stroke:#475569,color:#0F172A
+    classDef ok fill:#DCFCE7,stroke:#15803D,color:#052E16
+    class draft ai
+    class pick,replay,fired,gate code
+    class pass,pr ok
 ```
 
-Real exploits run only on the clone, whose network is isolated before first
-boot. Production gets detection-grade scans at safe settings.
+Real exploits run only on the clone, whose network is isolated before first boot. Production gets safe, detection-grade scans.
+
+<br>
 
 ## What runs today
 
-The reference implementation is about 4,000 lines of Python in seven packages,
-all in one process and in memory. It shows the protocols working between
-cooperating parts; it does not yet hold against a caller that lies.
-
-Every tool call in the demo goes through this pipeline
-(`backend/gateway/r2pip_gateway/gateway.py`):
+About 4,000 lines of Python in seven packages, in one process and in memory. Every tool call goes through the gateway pipeline in [`backend/gateway/r2pip_gateway/gateway.py`](backend/gateway/r2pip_gateway/gateway.py):
 
 ```mermaid
 flowchart LR
-    call["Tool call<br/>who, which tool,<br/>arguments, context"] --> schema{"1. Arguments<br/>match schema?"}
-    schema -- no --> denied["Denied<br/>audit event written"]
-    schema -- yes --> policy{"2. Policy rules<br/>first match wins,<br/>default deny"}
-    policy -- deny --> denied
-    policy -- allow --> budget{"3. Budget<br/>left?"}
+    call["Tool call"] --> schema{"Schema<br/>valid?"}
+    schema -- no --> denied["Denied<br/>and audited"]
+    schema -- yes --> policy{"Policy<br/>allows?"}
+    policy -- no --> denied
+    policy -- yes --> budget{"Budget<br/>left?"}
     budget -- no --> denied
-    budget -- yes --> run["4. Run the tool<br/>stand-ins today"]
-    run --> tag["5. Label the result<br/>trusted or untrusted"]
-    tag --> audit["6. Append audit event<br/>to the hash chain"]
+    budget -- yes --> run["Run the tool"]
+    run --> tag["Label result<br/>trusted or untrusted"]
+    tag --> audit["Append to<br/>hash chain"]
+
+    classDef code fill:#F8FAFC,stroke:#475569,color:#0F172A
+    classDef bad fill:#FEE2E2,stroke:#B91C1C,color:#450A0A
+    classDef ok fill:#DCFCE7,stroke:#15803D,color:#052E16
+    class call,schema,policy,budget,run,tag code
+    class denied bad
+    class audit ok
 ```
 
-The policy rules run in this order: taint firewall, perception and computation
-tools, memory provenance, role scope, approval gate, low-risk actions.
+The demo drives a scripted change through four human approval gates, shows the taint firewall blocking a poisoned write, and verifies the audit chain at the end. Agents are scripted and most tools are stand-ins; there is no AI model in the loop yet.
 
-The demo (`python scripts/run_demo.py`) drives one scripted mission from the
-original research-to-product use case through four human approval gates:
+<details>
+<summary><b>Packages</b></summary>
 
-```mermaid
-flowchart LR
-    insight["Insight"] --> spec["Spec"] --> h1{{"H1<br/>approve spec"}}
-    h1 --> plan["Plan"] --> h2{{"H2<br/>approve plan"}}
-    h2 --> build["Build and<br/>validate"] --> h4{{"H4<br/>approve merge"}}
-    h4 --> h5{{"H5<br/>approve deploy"}} --> deploy["Deploy"] --> verify["Verify the<br/>audit chain"]
-```
+<br>
 
-The approvers in the demo are functions that approve automatically. Only the
-deploy gate (H5) is enforced by a token the gateway verifies.
-
-| Package | Directory | What it holds |
-|---|---|---|
+| Package | Directory | Holds |
+|:--|:--|:--|
 | `r2pip_gateway` | `backend/gateway` | Tool registry, schema check, policy rules, budgets, the pipeline above |
 | `r2pip_approval` | `backend/approval` | Signed, single-use approval tokens |
 | `r2pip_audit` | `backend/audit` | Hash-chained audit log and verifier |
@@ -309,113 +334,44 @@ deploy gate (H5) is enforced by a token the gateway verifies.
 | `r2pip_memory` | `memory` | Prompt assembler, claim checks, session memory |
 | `r2pip_platform` | `platform` | Scripted agents, orchestrator, stand-in tools, demo, API |
 
-## Build plan
+</details>
 
-Each phase has an exit check, and the next does not start until it passes. The
-full plan, with the first two weeks day by day, is in the
-[research report](reports/Arbor%20self%20hosted%20security%20agent.md).
+<br>
 
-| Phase | Weeks | Goal | Model involved? |
-|---|---|---|---|
-| **0. Boring box** | 1–2 | Close ports, automatic security updates, outbound default-deny, off-box logs, drift baseline, canaries, CI hygiene | No |
-| **1. Trust kernel** | 3–6 | Gateway, signer and audit writer as separate processes; broker with about five actions; signed scope file; off-box audit anchors; kill switch | No |
-| **2. Read-only interpreter** | 7–10 | Watcher VM, reader and planner. The model explains diffs and alerts. Its only action is `notify` | Yes, read-only |
-| **3. First actions and PR bot** | 11–14 | Enable the reversible actions, each with snapshot and health check. A GitHub App that opens pull requests | Yes |
-| **4. Red on a clone, purple gate** | 15–20 | Isolated clone pipeline, safe scans on production, rule acceptance gate in CI | Yes |
-| **5. Optional** | Later | Cloud checks, security graph, a local model, more actions. Each must move a measured number | Yes |
+## Roadmap
 
-## Running the reference implementation
+Each phase ends with an exit check, and the next starts only when it passes.
 
-The repo is a multi-root monorepo: seven `r2pip_*` packages live under different
-directories (`backend/audit`, `backend/approval`, `backend/gateway`,
-`graph/focal`, `graph/ontology`, `memory`, `platform`). `pytest.ini` and
-`scripts/run_demo.py` put those roots on the path for you, so there is **no
-install step** for the test suite or the demo.
+| Phase | Weeks | Goal | AI |
+|:--|:--:|:--|:--:|
+| **0 · Boring box** | 1–2 | Close ports, automatic security updates, outbound default-deny, off-box logs, drift baseline, canaries, CI hygiene | — |
+| **1 · Trust kernel** | 3–6 | Gateway, signer and audit writer as separate processes; broker with five actions; signed scope file; off-box audit anchors; kill switch | — |
+| **2 · Read-only interpreter** | 7–10 | Watcher VM with reader and planner. The AI explains diffs and alerts; its only action is `notify` | ✓ |
+| **3 · First actions** | 11–14 | Reversible actions with snapshot and health check; a GitHub App that opens pull requests | ✓ |
+| **4 · Red on a clone** | 15–20 | Isolated clone pipeline, safe production scans, rule acceptance gate in CI | ✓ |
+| **5 · Optional** | later | Cloud checks, security graph, local model, more actions; each must move a measured number | ✓ |
 
-The quickest route is `./run.sh`, described under
-[Run it in one command](#run-it-in-one-command). The steps below do the same
-thing by hand, and work on Windows too.
+The full plan, with the first two weeks day by day, is in the [design research](reports/Arbor%20self%20hosted%20security%20agent.md).
 
-### Quickstart by hand
+<br>
 
-```bash
-python -m venv .venv
-# Windows:        .venv\Scripts\activate
-# macOS / Linux:  source .venv/bin/activate
+## Repository
 
-pip install -r requirements.txt
-
-pytest                       # full suite (219 passed), no install needed
-python scripts/run_demo.py   # golden-mission demo; prints a report, exits 0
+```text
+backend/gateway     tool gateway: schema, policy, budgets
+backend/approval    signed single-use approval tokens
+backend/audit       hash-chained audit log
+graph/              graph schema and focal extraction
+memory/             prompt assembler, claim checks, session memory
+platform/           scripted agents, orchestrator, demo, API
+docs/               architecture decision records
+reports/            design research behind this README
+research_notes/     source notes for the research
+run.sh              one-command runner
 ```
 
-### Running the API
+<br>
 
-The FastAPI app object is `r2pip_platform.app:app`. The seven package roots must
-be on `PYTHONPATH` for uvicorn to import it (the demo launcher does this itself,
-but uvicorn does not). Endpoints: `GET /health`, `GET /tools`,
-`POST /missions/run`, `GET /audit/verify`.
-
-The API has no authentication. `./run.sh api` binds it to this machine only
-(`127.0.0.1`). The commands below and the Compose file listen on all network
-interfaces (`0.0.0.0`), so use those only on a machine or network you trust.
-
-```bash
-# macOS / Linux — point PYTHONPATH at the seven roots:
-PYTHONPATH=backend/audit:backend/approval:backend/gateway:graph/ontology:graph/focal:memory:platform \
-  uvicorn r2pip_platform.app:app --host 0.0.0.0 --port 8000
-```
-
-```powershell
-# Windows PowerShell:
-$env:PYTHONPATH = "backend/audit;backend/approval;backend/gateway;graph/ontology;graph/focal;memory;platform"
-uvicorn r2pip_platform.app:app --host 0.0.0.0 --port 8000
-```
-
-Then `curl http://localhost:8000/health`.
-
-Optionally, `pip install -e .` makes all seven packages importable without
-setting `PYTHONPATH` (the path-based flow above keeps working either way). This
-is a convenience only; `pytest.ini` remains the source of truth for tests.
-
-### Docker / Compose
-
-```bash
-# Run the golden-mission demo in a container (default CMD, exits 0 on success):
-docker build -t r2pip-platform .
-docker run --rm r2pip-platform
-
-# Serve the API on http://localhost:8000 (includes a /health healthcheck):
-docker compose up --build
-```
-
-## Background: the original RFC
-
-Arbor's code and documents were written for RFC-001, the Research-to-Product
-Intelligence Platform (R2P-IP): a supervised swarm of agents turning research
-into software. That use case is dropped, and several claims in these documents
-describe a target architecture, not the code. The most accurate account of the
-code is [Reference Implementation Status](docs/rfc/15-reference-implementation-status.md).
-The decisions that carry over to the security agent are ADR-004 (one gateway),
-ADR-008 (taint firewall) and ADR-009 (approval tokens).
-
-| # | Document | Contents |
-|---|----------|----------|
-| 0 | [Planning](docs/rfc/00-planning.md) | ToC, architectural overview, subsystems, assumptions, risks, open questions, MVP vs Enterprise |
-| 1 | [Architectural Philosophy](docs/rfc/01-philosophy.md) | Data-to-Product framework, learning loops, Copilot Paradox, human-AI collaboration |
-| 2 | [Swarm Multi-Agent Architecture](docs/rfc/02-swarm-architecture.md) | Agent roster, lifecycle, MCP/ACP/A2A, coordination, failure recovery |
-| 3 | [Tool Ecosystem](docs/rfc/03-tool-ecosystem.md) | Perception/Computation/Action/Memory MCP tools + API specs |
-| 4 | [Knowledge Graph & Memory](docs/rfc/04-knowledge-memory.md) | Dual memory, GraphRAG, ontology, Focal Graph generation, ER diagrams |
-| 5 | [Autonomous SWE Workflow](docs/rfc/05-ase-workflow.md) | 13-stage deterministic workflow, blast radius, rollback, HITL points |
-| 6 | [Infrastructure](docs/rfc/06-infrastructure.md) | Kubernetes, serverless analytics, sandboxing, eventing, observability, IaC |
-| 7 | [Security & Governance](docs/rfc/07-security-governance.md) | Policy engine, RBAC, prompt-injection defense, audit, threat model |
-| 8 | [User Experience](docs/rfc/08-ux.md) | Focal graph viz, swarm timeline, HITL approval UI, 70/20/10 dashboard |
-| 9 | [Database Design](docs/rfc/09-database.md) | ERDs, indexing, partitioning, scaling |
-| 10 | [APIs](docs/rfc/10-apis.md) | REST/gRPC/OpenAPI for all 10 services with examples |
-| 11 | [Repository Organization](docs/rfc/11-repository.md) | Monorepo layout, CI/CD organization |
-| 12 | [Phased Roadmap](docs/rfc/12-roadmap.md) | Phase 0→5, team sizing, milestones, risk, success metrics |
-| A | [Implementation Checklists](docs/rfc/13-implementation-checklists.md) | Build-order checklists, MVP exit gate, definition of done |
-| B | [Agent Prompting & Scaffolding Standards](docs/rfc/14-agent-prompting-standards.md) | Effort routing, prompt pack rules, grounded claims, verifier scaffolding, prompt lifecycle |
-| — | [Architecture Decision Records](docs/adr/README.md) | ADR-001…010: the load-bearing decisions and their trade-offs |
-| — | [Glossary](docs/rfc/glossary.md) | Platform vocabulary |
-| — | [Golden Mission Walkthrough](examples/mission-walkthrough.md) | End-to-end example tracing every subsystem |
+<div align="center">
+<sub>MIT licensed · see <a href="LICENSE">LICENSE</a></sub>
+</div>
